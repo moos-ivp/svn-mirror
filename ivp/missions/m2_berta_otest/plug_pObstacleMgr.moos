@@ -7,4 +7,6 @@ ProcessConfig = pObstacleMgr
   CommsTick = 4 
 
   point_var = TRACKED_FEATURE 
+
+  post_view_polys = true
 } 
