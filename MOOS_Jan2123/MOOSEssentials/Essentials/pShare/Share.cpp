@@ -69,7 +69,7 @@ protected:
 
 	bool AddOutputRoute(MOOS::IPV4Address address, bool multicast = true);
 
-	bool AddInputRoute(MOOS::IPV4Address address, bool multicast = true);
+	bool AddInputRoute(MOOS::IPV4Address address, const std::vector<std::string> & white_list, bool multicast = true);
 
 	bool PublishSharingStatus();
 
@@ -83,12 +83,16 @@ protected:
 				const std::string & dest_name,
 				MOOS::IPV4Address address,
 				bool multicast,
-				double frequency);
+				double frequency,
+				double duration,
+				int max_shares);
 
 	bool  AddMulticastAliasRoute(const std::string & src_name,
 					const std::string & dest_name,
 					unsigned int channel_num,
-					double frequency);
+					double frequency,
+					double duration,
+					int max_shares);
 
 	MOOS::IPV4Address GetAddressFromChannelAlias(unsigned int channel_number) const;
 
@@ -155,7 +159,7 @@ Share::~Share()
 
 
 
-bool Share::Impl::AddInputRoute(MOOS::IPV4Address address , bool multicast)
+bool Share::Impl::AddInputRoute(MOOS::IPV4Address address , const std::vector<std::string> & white_list, bool multicast)
 {
 
 	if(listeners_.find(address)!=listeners_.end())
@@ -170,7 +174,8 @@ bool Share::Impl::AddInputRoute(MOOS::IPV4Address address , bool multicast)
 	//OK looking good, make it
 	listeners_[address] = new Listener(incoming_queue_,
 			address,
-			multicast);
+			multicast,
+			white_list);
 
 	//run it
 	return listeners_[address]->Run();
@@ -215,11 +220,6 @@ bool Share::Impl::OnProcessCommandLine()
     GetParameterFromCommandLineOrConfigurationFile("multicast_address",address);
     base_address_.set_host (address);
 
-
-
-	verbose_ = GetFlagFromCommandLineOrConfigurationFile("verbose");
-
-	//verbose_ = m_CommandLineParser.GetFlag("--verbose");
 
 	verbose_ = GetFlagFromCommandLineOrConfigurationFile("verbose");
 
@@ -482,6 +482,9 @@ bool Share::Impl::ProcessIOConfigurationString(std::string  configuration_string
 
 
 	std::string src_name, dest_name, routes;
+	std::vector<std::string> white_list;
+	double duration = -1;
+	int max_shares = -1;
 
 	MOOSRemoveChars(configuration_string, " ");
 
@@ -493,6 +496,19 @@ bool Share::Impl::ProcessIOConfigurationString(std::string  configuration_string
 		//default no change in name
 		dest_name = src_name;
 		MOOSValFromString(dest_name, configuration_string, "dest_name");
+
+		MOOSValFromString(duration,configuration_string,"duration");
+		MOOSValFromString(max_shares,configuration_string,"max_shares");
+	}else{
+		//we may have a white list being supplied. Such a list gives the 
+		//patterns which must be matched if a message is to be imported
+		//into the community this pShare belongs to. It is made from
+		//a & separated list. eg ..,white_list = X&Y&Z,...
+		std::string swl;
+		MOOSValFromString(swl,configuration_string,"white_list");
+		if(!swl.empty()){
+			white_list = MOOS::StringListToVector(swl,"&");
+		}
 	}
 
 	//we do need a route....
@@ -526,12 +542,12 @@ bool Share::Impl::ProcessIOConfigurationString(std::string  configuration_string
 			if (is_output)
 			{
 				if (!AddMulticastAliasRoute(src_name, dest_name,
-						channel_num,frequency))
+						channel_num,frequency,duration, max_shares))
 					return false;
 			}
 			else
 			{
-				if (!AddInputRoute(GetAddressFromChannelAlias(channel_num),
+				if (!AddInputRoute(GetAddressFromChannelAlias(channel_num),white_list,
 						true))
 					return false;
 			}
@@ -543,12 +559,12 @@ bool Share::Impl::ProcessIOConfigurationString(std::string  configuration_string
 
 			if (is_output)
 			{
-				if (!AddRoute(src_name, dest_name, route_address, false,frequency))
+				if (!AddRoute(src_name, dest_name, route_address, false,frequency,duration,max_shares))
 					return false;
 			}
 			else
 			{
-				if (!AddInputRoute(route_address, false))
+				if (!AddInputRoute(route_address, white_list,false))
 				{
 					return false;
 				}
@@ -584,6 +600,8 @@ bool Share::Impl::Iterate()
 			}
 		}
 	}
+
+	
 
 	PublishSharingStatus();
 	return true;
@@ -651,6 +669,7 @@ bool Share::Impl::PublishSharingStatus()
 	return true;
 }
 
+
 bool Share::Impl::OnNewMail(MOOSMSG_LIST & new_mail)
 {
 	MOOSMSG_LIST::iterator q;
@@ -660,6 +679,7 @@ bool Share::Impl::OnNewMail(MOOSMSG_LIST & new_mail)
 	{
 		//do we need to forward it
 		RouteMap::iterator g = routing_table_.find(q->GetKey());
+		std::cerr<<"pShare tx "<<q->GetKey()<<"\n";
 		try
 		{
 			if(g != routing_table_.end())
@@ -686,17 +706,21 @@ bool Share::Impl::OnNewMail(MOOSMSG_LIST & new_mail)
 bool  Share::Impl::AddMulticastAliasRoute(const std::string & src_name,
 				const std::string & dest_name,
 				unsigned int channel_num,
-				double frequency)
+				double frequency,
+				double duration,
+				int max_shares)
 {
 	MOOS::IPV4Address alias_address = GetAddressFromChannelAlias(channel_num);
-	return AddRoute(src_name,dest_name,alias_address,true,frequency);
+	return AddRoute(src_name,dest_name,alias_address,true,frequency,duration,max_shares);
 }
 
 bool  Share::Impl::AddRoute(const std::string & src_name,
 				const std::string & dest_name,
 				MOOS::IPV4Address address,
 				bool multicast,
-				double frequency)
+				double frequency,
+				double duration,
+				int max_shares)
 {
 
 	SocketMap::iterator mcg = socket_map_.find(address);
@@ -709,10 +733,6 @@ bool  Share::Impl::AddRoute(const std::string & src_name,
 	std::string trimed_src_name = trim(src_name);
 	std::string trimed_dest_name = trim(dest_name);
 
-
-
-
-
 	if(trimed_src_name.find_last_of("*?:")==std::string::npos)
 	{
 		Route route;
@@ -721,18 +741,52 @@ bool  Share::Impl::AddRoute(const std::string & src_name,
 		route.dest_address = address;
 		route.multicast = multicast;
 		route.frequency = frequency;
+		route.duration_of_share = duration;
+		route.max_shares= max_shares;
 
 		std::list<Route> & rlist = routing_table_[trimed_src_name];
-
+		
 		//check we have not already got this exact same route....
-		if(find(rlist.begin(), rlist.end(),route)==rlist.end())
+		//invokes == operator on type Route.
+		std::list<Route>::iterator q = find(rlist.begin(), rlist.end(),route);
+		
+		if(q==rlist.end())
 		{
 			//this is a regular share....
+			//and it is the first we have heard of it
 			Register(trimed_src_name, 0.0);
 
 			//add this to our routing table
 			rlist.push_back(route);
+		}else{
+			//OK so we have already been told about this route already
+			//but as of 2022 Oct restating a share where a duration is >0
+			//resets the timer and all other attributes
+			if(verbose_){
+				std::cout<<" refreshing route information for "<< q->to_string()<<"\n";
+			}
+
+			if(duration==0.0){
+				//this is a special case requested by mikerb 2022. For non-wildcard shares
+				//if duration = 0, then send just once what ever is latest in DB
+				//We can make this happen
+				//by unregistering (does nothing if not registered) and then registering
+
+				if(verbose_){
+					std::cout<<" spoecial case duration = 0 forcing refresh from db "<< q->to_string()<<"\n";
+				}
+
+				UnRegister(trimed_src_name);
+				Register(trimed_src_name, 0.0);
+
+				route.max_shares = 1;
+				route.duration_of_share = std::numeric_limits<double>::max();
+			}
+
+			//do the copy
+			*q=route;
 		}
+
 	}
 	else
 	{
@@ -746,6 +800,10 @@ bool  Share::Impl::AddRoute(const std::string & src_name,
 		route.dest_name = trimed_dest_name;
 		route.dest_address = address;
 		route.multicast = multicast;
+		route.frequency = frequency;
+		route.duration_of_share = duration;
+		route.max_shares= max_shares;
+
 
 		//this looks like a wildcard share
 		std::string var_pattern = MOOS::Chomp(trimed_src_name,":");
@@ -753,17 +811,20 @@ bool  Share::Impl::AddRoute(const std::string & src_name,
 		if(!trimed_src_name.empty())
 			app_pattern = trimed_src_name;
 
-
 		std::list<Route> & rlist = wildcard_routing_table_[std::make_pair(var_pattern,app_pattern)];
 
 		//check we have not already got this exact same route....
-		if(find(rlist.begin(), rlist.end(),route)==rlist.end())
+		std::list<Route>::iterator q = find(rlist.begin(), rlist.end(),route);
+		if(q==rlist.end())
 		{
 			//do a wildcard registration
 			Register(var_pattern,app_pattern,0.0);
 
+
 			//add this to wildcard routing table
 			rlist.push_back(route);
+		}else{
+			*q=route;
 		}
 	}
 
@@ -813,6 +874,8 @@ bool Share::Impl::OnCommandMsg(CMOOSMsg  Msg)
 	if(!Msg.IsYoungerThan(GetAppStartTime()))
 		return false;
 
+	std::cerr<<"OnCommandMsg : "<<Msg.GetString()<<"\n";
+
 	std::string cmd;
 	MOOSValFromString(cmd,Msg.GetString(),"cmd");
 
@@ -835,6 +898,7 @@ bool Share::Impl::OnCommandMsg(CMOOSMsg  Msg)
 		}
 		else
 		{
+			MOOSTrace(cmd);
 			throw std::runtime_error("cmd=X - X was neither \"output\" or \"input\"\n");
 		}
 	}
@@ -1041,6 +1105,8 @@ bool Share::Impl::ApplyWildcardRoutes( CMOOSMsg& msg)
 
 bool Share::Impl::ApplyRoutes(CMOOSMsg & msg)
 {
+
+	std::cerr<<"applying route for "<<msg.GetString()<<"\n";
 	//do we know how to route this? double check
 	RouteMap::iterator g = routing_table_.find(msg.GetKey());
 	if(g == routing_table_.end())
@@ -1054,11 +1120,20 @@ bool Share::Impl::ApplyRoutes(CMOOSMsg & msg)
 	std::list<Route>::iterator q;
 	for(q = route_list.begin();q!=route_list.end();q++)
 	{
+		std::cerr<<"checking route  "<<q->to_string()<<"\n";
+
+		
 		//process every route
 		Route & route = *q;
 
-		if(route.frequency>0.0 && now-route.last_time_sent<(1.0/route.frequency))
-		    continue;
+		//allow route to demur becasue for example
+		//  1) share is too often, 
+		//	2) outside duration
+		//  3) share count has been exceeded.
+		//  4) another reason privae to the share...
+		if(!route.IsActive(now)){
+			continue;
+		}
 
 		SocketMap::iterator mcg = socket_map_.find(route.dest_address);
 		if (mcg == socket_map_.end()) {
@@ -1109,6 +1184,7 @@ bool Share::Impl::ApplyRoutes(CMOOSMsg & msg)
 
 
 		route.last_time_sent = now;
+		route.num_shares_completed++;
 	}
 
 	return true;

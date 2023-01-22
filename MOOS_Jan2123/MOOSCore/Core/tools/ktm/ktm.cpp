@@ -47,7 +47,7 @@ void PrintHelpAndExit()
     std::cerr<<"Kill The MOOS (ktm)\n";
     std::cerr<<"--channel=<address>    address to issue kill on \n";
     std::cerr<<"--port=<int>           port to issue kill on \n";
-    std::cerr<<"--phrase=<string>      pass phrase which Suicide listeners are keyed to\n";
+    std::cerr<<"--phrase=<string>      pass phrase which Self-Exit listeners are keyed to\n";
     std::cerr<<"--all                  pass to network, it is a massacre\n";
     std::cerr<<"--query                find out who would jump\n";
     std::cerr<<"--name=<string>        only apply if matches pattern\n";
@@ -102,7 +102,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        std::cerr<<"sending suicide instruction to "<<multicast_address<<":"<< multicast_port<<"\n";
+        std::cerr<<"sending self-exit instruction to "<<multicast_address<<":"<< multicast_port<<"\n";
     }
 
     std::string command = action+":"+phrase+":"+name_pattern;
